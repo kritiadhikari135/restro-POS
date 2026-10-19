@@ -1,0 +1,33 @@
+{
+  "baseUrl": "http://localhost:8000",
+  "nominalLoad": {
+    "vus": 20,
+    "duration": "1m"
+  },
+  "endpoints": [
+    {
+      "name": "get_users",
+      "method": "GET",
+      "path": "/api/users",
+      "p95_target_ms": 300
+    },
+    {
+      "name": "get_orders",
+      "method": "GET",
+      "path": "/api/orders",
+      "p95_target_ms": 300
+    },
+    {
+      "name": "get_products",
+      "method": "GET",
+      "path": "/api/products",
+      "p95_target_ms": 300
+    },
+    {
+      "name": "get_dashboard_summary",
+      "method": "GET",
+      "path": "/api/dashboard/summary",
+      "p95_target_ms": 300
+    }
+  ]
+}

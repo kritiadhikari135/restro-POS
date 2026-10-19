@@ -1,0 +1,116 @@
+
+
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+import { Trend } from 'k6/metrics';
+
+// ---- Config ----------------------------------------------------------
+
+const BASE_URL = __ENV.BASE_URL || ''; 
+const LIST_PATH = __ENV.LIST_PATH || '/api/orders';
+const AUTH_TOKEN = __ENV.AUTH_TOKEN || '';
+const EXPECTED_MAX_ITEMS = 200;
+
+// Custom trend so the list-endpoint latency is isolated from anything
+// else you might add to this file later.
+const listDuration = new Trend('list_endpoint_duration', true);
+
+// ---- Scenarios ---------------------------------------------------------
+// SCENARIO=smoke  -> quick sanity check (1 VU, few iterations)
+// SCENARIO=load   -> sustained LAN load to validate p95 under concurrency
+// default: smoke
+
+const SCENARIO = __ENV.SCENARIO || 'smoke';
+
+const scenarios = {
+  smoke: {
+    executor: 'constant-vus',
+    vus: 1,
+    duration: '15s',
+  },
+  load: {
+    executor: 'constant-vus',
+    vus: Number(__ENV.VUS || 10),
+    duration: __ENV.DURATION || '1m',
+  },
+};
+
+export const options = {
+  scenarios: {
+    [SCENARIO]: scenarios[SCENARIO],
+  },
+  thresholds: {
+    // Overall HTTP duration threshold (matches the requirement).
+    http_req_duration: ['p(95)<150'],
+    // Same check scoped to just the list endpoint, in case other
+    // requests get added to this script later.
+    list_endpoint_duration: ['p(95)<150'],
+    // Requirement implies correctness too: responses must succeed.
+    http_req_failed: ['rate<0.01'],
+    checks: ['rate>0.99'],
+  },
+};
+
+// ---- Test logic ----------------------------------------------------------
+
+export default function () {
+  const params = {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {}),
+    },
+    tags: { name: 'list_orders' },
+  };
+
+  const res = http.get(`${BASE_URL}${LIST_PATH}`, params);
+  listDuration.add(res.timings.duration);
+
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'body is valid JSON': (r) => {
+      try {
+        JSON.parse(r.body);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    },
+    [`item count <= ${EXPECTED_MAX_ITEMS}`]: (r) => {
+      try {
+        const body = JSON.parse(r.body);
+        const items = Array.isArray(body) ? body : body.items || body.orders || [];
+        return items.length <= EXPECTED_MAX_ITEMS;
+      } catch (e) {
+        return false;
+      }
+    },
+    'p95 target 150ms (single-request check)': (r) => r.timings.duration < 150,
+  });
+
+  // Small pause to avoid unrealistically hammering a single-terminal
+  // POS bridge; tune or remove for pure throughput testing.
+  sleep(0.1);
+}
+
+// ---- Summary --------------------------------------------------------------
+
+export function handleSummary(data) {
+//   const p95 = data.metrics.http_req_duration.values['p(95)'];
+const p95 =
+  data.metrics.list_endpoint_duration.values['p(95)'];
+
+  const passed = p95 < 150;
+
+  console.log('');
+  console.log('=== POS Bridge List Endpoint — Requirement Check ===');
+  console.log(`Endpoint       : ${BASE_URL}${LIST_PATH}`);
+  console.log(`Scenario       : ${SCENARIO}`);
+  console.log(`p95 duration   : ${p95.toFixed(2)} ms`);
+  console.log(`Target         : < 150 ms (LAN, <=200 in-memory orders)`);
+  console.log(`Result         : ${passed ? 'PASS' : 'FAIL'}`);
+  console.log('=====================================================');
+
+  return {
+    stdout: JSON.stringify(data, null, 2),
+  };
+}

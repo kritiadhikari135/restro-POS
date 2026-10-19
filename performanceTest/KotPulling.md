@@ -1,0 +1,1 @@
+k6 run -e BASE_URL=https://your-api.com -e ENDPOINT=/api/kot/poll -e VUS=5 -e DURATION=2m kot_polling_interval_test.js
